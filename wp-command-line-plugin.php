@@ -38,6 +38,7 @@ function wpcli_get_all_manageable_commands() {
     // These keys MUST match the ones identified by wpcli_identify_command_action()
     // and used by ai_agent_handle_cli_command() for routing.
     return [
+        'help'              => 'Shows plugin information and a list of available commands.',
         'core version'      => 'Get WordPress core version information.',
         'option get'        => 'Get a site option value.',
         'option update'     => 'Update a site option.',
@@ -69,6 +70,12 @@ add_action( 'wp_ajax_wpcli_command_handler', 'wpcli_command_handler_callback' );
  */
 function wpcli_identify_command_action($command_string) {
     $command_string = trim($command_string);
+
+    // Handle 'help' or '/help' specifically
+    if (strtolower($command_string) === 'help' || strtolower($command_string) === '/help') {
+        return 'help';
+    }
+
     $command_parts = explode(' ', $command_string, 3); // Get first two parts generally
 
     if (empty($command_parts[0])) {

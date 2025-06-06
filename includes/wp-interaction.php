@@ -562,8 +562,26 @@ function php_handle_option_update(array $args) {
 function ai_agent_handle_cli_command( $command_string ) {
     $command_string = trim($command_string);
 
+    // Handle 'help' command
+    if (strtolower($command_string) === 'help' || strtolower($command_string) === '/help') {
+        if (function_exists('wpcli_get_all_manageable_commands')) {
+            $commands = wpcli_get_all_manageable_commands();
+            $output = "WP Command Line Interface Plugin\n";
+            $output .= "---------------------------------\n";
+            $output .= "This plugin provides a command-line interface to execute WordPress commands directly from the admin area.\n";
+            $output .= "Type a command and hit enter. For commands that take arguments, include them after the command (e.g., 'option get siteurl').\n\n";
+            $output .= "Available commands:\n";
+            foreach ($commands as $key => $description) {
+                $output .= "- " . $key . ": " . $description . "\n";
+            }
+            $output .= "\nFor more details on command arguments and usage, please refer to the plugin's README.md file.";
+            return rtrim($output); // rtrim in case of any accidental trailing newline from loop, though the final string concatenation should be fine.
+        } else {
+            return "Error: Help information is currently unavailable (cannot access command list).";
+        }
+    }
     // Try to parse 'option get <name>' or 'option update <name> <value_string>'
-    if (preg_match('/^option\s+(get|update)\s+([^\s]+)(?:\s*(.*))?$/s', $command_string, $matches)) {
+    elseif (preg_match('/^option\s+(get|update)\s+([^\s]+)(?:\s*(.*))?$/s', $command_string, $matches)) {
         // ... (existing option handling logic) ...
         $sub_command_action = strtolower($matches[1]);
         $option_name = $matches[2];

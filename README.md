@@ -26,6 +26,9 @@ The WP Command Line Interface plugin integrates a terminal-like window into your
     *   **Keyboard Shortcut:** Press `Ctrl+I` (or your configured shortcut) to toggle the CLI window.
 
 2.  **Using Commands:**
+    *   Once the command line interface is open, you can type commands directly.
+    *   For a list of available commands, plugin information, and basic usage hints, type:
+        `/help`
     *   Type your WP-CLI command into the input field at the bottom of the CLI window and press Enter or click the "Send" button.
     *   For a detailed list of available commands and examples, please refer to [commands.md](commands.md).
     *   Ensure that the command you wish to use is activated in the plugin's settings.
@@ -58,3 +61,4 @@ While this plugin aims to provide a convenient way to run WP-CLI commands, alway
 
 ### 1.1.1 - 2025-06-06
 - Fixed a fatal PHP parse error caused by an extraneous curly brace in `includes/wp-interaction.php`.
+- Enhanced `/help` command to display plugin information, usage hints, a list of all available commands with descriptions, and a pointer to the README for more details.
