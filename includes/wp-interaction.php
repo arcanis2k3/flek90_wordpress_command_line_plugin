@@ -52,7 +52,8 @@ function ai_agent_handle_cli_command( $command_string ) {
 function ai_agent_execute_wp_cli_command( $command ) {
     // Ensure WP-CLI path is correct and WordPress path is specified.
     // --allow-root is used because a web server user (like www-data) might run this.
-    $full_command = 'wp ' . $command . ' --path=' . AI_AGENT_WP_PATH . ' --allow-root';
+    // Redirect STDERR to STDOUT to capture error messages from wp-cli.
+    $full_command = 'wp ' . $command . ' --path=' . AI_AGENT_WP_PATH . ' --allow-root 2>&1';
 
     // For debugging: error_log( "Executing WP-CLI command: " . $full_command );
 
@@ -61,31 +62,34 @@ function ai_agent_execute_wp_cli_command( $command ) {
     // Ensure $command is not empty after potential transformations
     if (empty(trim($command))) {
         // error_log("AI Agent: Attempted to execute an empty WP-CLI command.");
-        return "Error: Attempted to execute an empty command.";
+        return "Error: Attempted to execute an empty command."; // This will be caught by handler
     }
     $output = shell_exec( $full_command );
 
     // For debugging: error_log( "WP-CLI output: " . $output );
 
+    // After '2>&1', $output will contain STDOUT and STDERR.
+    // $output will be null if shell_exec fails (e.g., disabled, command not found due to PATH issues even for 'wp')
     if ( $output === null ) {
-        // shell_exec returns null on error or if the command produces no output but exits with error status.
-        // It can also return an empty string for successful commands that genuinely have no output.
-        // A more robust solution might involve checking exit codes, which proc_open would allow.
-        // For now, we assume null indicates an execution problem or command produced no output and possibly failed.
-        // error_log( "WP-CLI command failed or produced null output: " . $full_command );
-
-        // To provide better feedback, let's try to capture stderr if possible, though shell_exec doesn't make this easy.
-        // For now, returning a generic error or false.
-        // Let's return a specific message that can be displayed to the user.
-        return "Command executed. Output was null (may indicate an error or no output).";
+        // This indicates a severe issue, like shell_exec being disabled or 'wp' not found at system level.
+        // error_log( "WP-CLI command execution failed: shell_exec returned null for command: " . $full_command );
+        return "Error: Command execution failed at system level (shell_exec returned null). Check server logs and shell_exec configuration.";
     }
 
     $trimmed_output = trim( $output );
+
+    // Even with 2>&1, a command might succeed and produce no output, or produce only error output.
+    // We should check if the output string contains "Error:", "Warning:", "Fatal error:" etc.
+    // WP-CLI typically uses "Error:" for its own controlled errors. PHP errors would be "Fatal error:", "Warning:".
     if ( $trimmed_output === "" ) {
-        return "Command executed successfully and produced no output.";
+        return "Command executed and produced no output."; // Not necessarily an error.
+    } elseif (strpos($trimmed_output, 'Error:') === 0 || strpos($trimmed_output, 'Fatal error:') === 0 || strpos($trimmed_output, 'Warning:') === 0) {
+        // If WP-CLI or PHP error messages are now in the output, return them as an error.
+        // The 'Error:' prefix will be caught by the main handler and sent as wp_send_json_error.
+        return $trimmed_output; // It already starts with "Error:" or similar.
     }
 
-    return $trimmed_output;
+    return $trimmed_output; // Normal output
 }
 
 /**
