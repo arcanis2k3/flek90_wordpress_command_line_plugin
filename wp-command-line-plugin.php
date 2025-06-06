@@ -17,10 +17,10 @@ if ( ! defined( 'WPINC' ) ) {
     die;
 }
 
-// Define the path to the WordPress installation for WP-CLI.
-if ( ! defined( 'AI_AGENT_WP_PATH' ) ) {
-    define( 'AI_AGENT_WP_PATH', '/app/wordpress' ); // Standard path in this environment
-}
+// WP-CLI execution has been removed, so AI_AGENT_WP_PATH is no longer needed.
+// if ( ! defined( 'AI_AGENT_WP_PATH' ) ) {
+//    define( 'AI_AGENT_WP_PATH', '/app/wordpress' );
+// }
 
 // Include the WP Interaction functions.
 require_once plugin_dir_path( __FILE__ ) . 'includes/wp-interaction.php';
@@ -32,30 +32,97 @@ require_once plugin_dir_path( __FILE__ ) . 'includes/admin-settings-page.php';
  * Returns the list of all manageable command bases.
  * This function serves as the single source of truth for all commands this plugin can manage.
  *
- * @return array List of command base strings.
+ * @return array Associative array of command_key => description.
  */
 function wpcli_get_all_manageable_commands() {
+    // These keys MUST match the ones identified by wpcli_identify_command_action()
+    // and used by ai_agent_handle_cli_command() for routing.
     return [
-        'plugin list',
-        'plugin get',
-        'option get',
-        'option update',
-        'user list',
-        'user get',
-        'theme list',
-        'theme get',
-        'core version',
-        'site list',
-        'post list',
-        'comment list',
-        'page create',
-        // Future commands can be added here.
+        'core version'      => 'Get WordPress core version information.',
+        'option get'        => 'Get a site option value.',
+        'option update'     => 'Update a site option.',
+        'page create'       => 'Create a new page.',
+        'plugin list'       => 'List installed plugins.',
+        'plugin activate'   => 'Activate a plugin.',
+        'plugin deactivate' => 'Deactivate a plugin.',
+        'theme list'        => 'List installed themes.',
+        'theme activate'    => 'Activate a theme.',
+        'user list'         => 'List users.',
+        'user get'          => 'Get details for a specific user.',
+        // Add other commands that are implemented via PHP handlers.
+        // Commands previously handled by WP-CLI directly and not yet refactored
+        // (e.g. 'site list', 'post list', 'comment list', 'plugin get', 'theme get')
+        // are effectively removed if not listed here and if the WP-CLI fallback is gone.
+        // For this task, we assume all listed here are PHP-handled.
     ];
 }
 
 add_action( 'admin_menu', 'wpcli_plugin_add_admin_menu' );
 add_action( 'admin_init', 'wpcli_plugin_register_settings' );
 add_action( 'wp_ajax_wpcli_command_handler', 'wpcli_command_handler_callback' );
+
+/**
+ * Identifies the command action key from a raw command string.
+ *
+ * @param string $command_string The raw command string.
+ * @return string|null The identified command action key (e.g., "option get", "page create") or null if not recognized.
+ */
+function wpcli_identify_command_action($command_string) {
+    $command_string = trim($command_string);
+    $command_parts = explode(' ', $command_string, 3); // Get first two parts generally
+
+    if (empty($command_parts[0])) {
+        return null;
+    }
+
+    $group = strtolower($command_parts[0]);
+    $action = isset($command_parts[1]) ? strtolower($command_parts[1]) : null;
+
+    switch ($group) {
+        case 'option':
+            if ($action === 'get' || $action === 'update') {
+                return 'option ' . $action;
+            }
+            break;
+        case 'page':
+            if ($action === 'create') {
+                return 'page create';
+            }
+            break;
+        case 'plugin':
+            if ($action === 'list' || $action === 'activate' || $action === 'deactivate') {
+                return 'plugin ' . $action;
+            }
+            break;
+        case 'theme':
+            if ($action === 'list' || $action === 'activate') {
+                return 'theme ' . $action;
+            }
+            break;
+        case 'user':
+            if ($action === 'list' || $action === 'get') {
+                return 'user ' . $action;
+            }
+            break;
+        case 'core':
+            if ($action === 'version') {
+                return 'core version';
+            }
+            break;
+    }
+    // Fallback for simple commands that might not have a group/action structure
+    // but are directly the key in wpcli_get_all_manageable_commands.
+    // This is less likely with current structure but good for robustness.
+    // For example, if 'core version' was just 'coreversion' as a key.
+    // The current keys are like "core version", so the switch-case handles them.
+    // If $command_string itself is a key (e.g. a single-word command if we had one)
+    if (array_key_exists($command_string, wpcli_get_all_manageable_commands())) {
+         return $command_string;
+    }
+
+    return null; // Not identified
+}
+
 
 function wpcli_command_handler_callback() {
     // Verify nonce. The nonce name 'wpcli_nonce' should match what's sent from JS.
@@ -79,38 +146,49 @@ function wpcli_command_handler_callback() {
         return;
     }
 
-    // **Security: Check if the command is active and allowed.**
-    // 1. Get the base of the entered command.
-    $entered_command_base = '';
-    $all_manageable_commands = wpcli_get_all_manageable_commands(); // Get all defined command bases
-    foreach ($all_manageable_commands as $manageable_base) {
-        if (strpos($command, $manageable_base) === 0) {
-            $entered_command_base = $manageable_base;
-            break;
-        }
-    }
+    // **Security: Identify and check if the command is active and allowed.**
+    $command_action_key = wpcli_identify_command_action($command);
 
-    if (empty($entered_command_base)) {
-        wp_send_json_error(['message' => 'Error: Unknown command.'], 400);
+    if ($command_action_key === null) {
+        wp_send_json_error(['message' => 'Error: Unknown command structure or not a supported command.'], 400);
         return;
     }
 
-    // 2. Get the list of currently active commands from options.
-    // Defaults to all manageable commands being active if the option isn't set yet.
+    $all_manageable_commands_map = wpcli_get_all_manageable_commands(); // This now returns key => description
+
+    if (!array_key_exists($command_action_key, $all_manageable_commands_map)) {
+        wp_send_json_error(['message' => "Error: Command action '{$command_action_key}' is not recognized as a manageable feature."], 400);
+        return;
+    }
+
     $active_commands_option = get_option('wpcli_plugin_active_commands');
-    if (false === $active_commands_option) { // Option not yet saved
-        $active_commands = array_fill_keys($all_manageable_commands, true);
+    $is_active = true; // Default to active
+
+    if ($active_commands_option === false) {
+        // Option not in DB yet, all manageable commands are active by default.
+        $is_active = true;
     } else {
-        $active_commands = (array) $active_commands_option;
+        // Option exists, check if the command is explicitly listed and true.
+        // If a command is not in the $active_commands_option array (e.g., newly added command to the plugin),
+        // it defaults to inactive for safety unless $active_commands_option is empty (meaning nothing saved yet).
+        if (is_array($active_commands_option) && !empty($active_commands_option)) { // If settings have been saved at least once
+             if (!isset($active_commands_option[$command_action_key]) || $active_commands_option[$command_action_key] == false) {
+                $is_active = false;
+            }
+        } elseif (is_array($active_commands_option) && empty($active_commands_option) && $active_commands_option !== false) {
+            // This means the option was saved as an empty array (all commands unchecked by user)
+            $is_active = false;
+        }
+        // If $active_commands_option is specifically an empty array from DB, all are inactive.
+        // If $active_commands_option is `false` (not in DB), all are active (covered above).
     }
 
-    // 3. Check if the entered command's base is in the active list and set to true.
-    if (!isset($active_commands[$entered_command_base]) || $active_commands[$entered_command_base] == false) {
-        wp_send_json_error(['message' => 'Error: This command is currently deactivated by the site administrator.'], 403);
+    if (!$is_active) {
+        wp_send_json_error(['message' => "Error: Command '{$command_action_key}' is deactivated by the site administrator."], 403);
         return;
     }
 
-    // Execute the command using the new handler.
+    // Execute the command using the handler in wp-interaction.php
     // The ai_agent_handle_cli_command function is in 'includes/wp-interaction.php'.
     $output = ai_agent_handle_cli_command( $command );
 

@@ -168,21 +168,13 @@ function wpcli_sanitize_active_commands( $input ) {
  * Render the checkboxes for 'Activate/Deactivate Commands'.
  */
 function wpcli_plugin_active_commands_field_html() {
-    // Get all manageable commands (defined in the main plugin file)
-    $all_manageable_commands = function_exists('wpcli_get_all_manageable_commands') ? wpcli_get_all_manageable_commands() : [];
+    // Get all manageable commands (command_key => description)
+    $manageable_commands_map = function_exists('wpcli_get_all_manageable_commands') ? wpcli_get_all_manageable_commands() : [];
 
     // Get the currently saved active commands
     $active_commands_option = get_option( 'wpcli_plugin_active_commands' );
 
-    // If the option is not set yet (false), default all manageable commands to true (active).
-    // This ensures that on first view, all commands appear enabled.
-    if ( false === $active_commands_option ) {
-        $active_commands = array_fill_keys( $all_manageable_commands, true );
-    } else {
-        $active_commands = (array) $active_commands_option;
-    }
-
-    if ( empty( $all_manageable_commands ) ) {
+    if ( empty( $manageable_commands_map ) ) {
         echo '<p>' . esc_html__( 'No manageable commands found. Ensure `wpcli_get_all_manageable_commands()` is defined and returns commands.', 'wp-command-line-interface' ) . '</p>';
         return;
     }
@@ -190,19 +182,38 @@ function wpcli_plugin_active_commands_field_html() {
     <p><?php esc_html_e( 'Select the commands that should be active and usable in the Command Line Interface.', 'wp-command-line-interface' ); ?></p>
     <fieldset>
         <legend class="screen-reader-text"><span><?php esc_html_e( 'Commands Activation', 'wp-command-line-interface' ); ?></span></legend>
-        <?php foreach ( $all_manageable_commands as $command_base ) : ?>
+        <?php foreach ( $manageable_commands_map as $command_key => $description ) : ?>
             <?php
-            // Ensure every command from the main list has an entry in $active_commands for the checkbox
-            $is_active = isset( $active_commands[ $command_base ] ) ? (bool) $active_commands[ $command_base ] : true; // Default to true if new command not in option yet
-            $field_id = 'wpcli_active_cmd_' . sanitize_key( $command_base );
+            $is_active = true; // Default for initial state (option not saved yet)
+            if ( $active_commands_option === false ) {
+                // Option not in DB, so all are active by default on first view.
+                $is_active = true;
+            } else {
+                // Option exists in DB (even if an empty array).
+                // If command_key is not in the saved option, it means it's a new command since last save, default to false (inactive).
+                // Otherwise, use the saved value.
+                $active_commands_option = (array) $active_commands_option; // Ensure it's an array
+                if (array_key_exists($command_key, $active_commands_option)) {
+                    $is_active = (bool) $active_commands_option[$command_key];
+                } else {
+                    // New command not in saved options, default to false (inactive) for safety
+                    // unless the option was never saved at all (empty $active_commands_option and $active_commands_option !== false)
+                    // The $active_commands_option === false case above handles "never saved".
+                    // If $active_commands_option is an array (even empty), it means settings were touched.
+                    $is_active = false;
+                }
+            }
+
+            $field_id = 'wpcli_active_cmd_' . sanitize_key( $command_key );
             ?>
-            <label for="<?php echo esc_attr( $field_id ); ?>" style="display: block; margin-bottom: 5px;">
+            <label for="<?php echo esc_attr( $field_id ); ?>" style="display: block; margin-bottom: 8px;">
                 <input type="checkbox"
                        id="<?php echo esc_attr( $field_id ); ?>"
-                       name="wpcli_plugin_active_commands[<?php echo esc_attr( $command_base ); ?>]"
+                       name="wpcli_plugin_active_commands[<?php echo esc_attr( $command_key ); ?>]"
                        value="1"
                        <?php checked( $is_active, true ); ?>>
-                <code><?php echo esc_html( $command_base ); ?></code>
+                <code><?php echo esc_html( $command_key ); ?></code>
+                <p style="margin-left: 25px; margin-top: 0; font-size: 0.9em; color: #555;"><?php echo esc_html( $description ); ?></p>
             </label>
         <?php endforeach; ?>
     </fieldset>
