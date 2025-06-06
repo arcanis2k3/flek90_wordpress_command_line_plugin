@@ -53,3 +53,8 @@ Alternatively, you can manually upload the plugin folder to your `wp-content/plu
 ## Security Considerations
 
 While this plugin aims to provide a convenient way to run WP-CLI commands, always be mindful of the commands you are executing, especially those that modify data or settings (`option update`, `page create`, etc.). The command activation feature allows administrators to limit the available commands to only those deemed safe and necessary for their workflow.
+
+## Changelog
+
+### 1.1.1 - 2025-06-06
+- Fixed a fatal PHP parse error caused by an extraneous curly brace in `includes/wp-interaction.php`.

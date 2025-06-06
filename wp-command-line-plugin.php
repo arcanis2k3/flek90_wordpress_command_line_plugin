@@ -3,7 +3,7 @@
  * Plugin Name:       WP Command Line Interface
  * Plugin URI:        https://example.com/plugins/wp-command-line-interface/
  * Description:       Provides a command-line interface to execute WP-CLI commands from the WordPress admin.
- * Version:           1.1.0
+ * Version:           1.1.1
  * Author:            flek90
  * Author URI:        https://flek90.aureusz.com
  * License:           GPL v2 or later

@@ -649,7 +649,6 @@ function ai_agent_handle_cli_command( $command_string ) {
     // This line was commented out in original, keeping it so for now.
     // return "Error: Unhandled command or internal logic error in ai_agent_handle_cli_command.";
     }
-}
 
 // WP-CLI execution via proc_open is being phased out.
 // The function ai_agent_execute_wp_cli_command is now removed.
