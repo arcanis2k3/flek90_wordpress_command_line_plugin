@@ -6,7 +6,37 @@
 
 // Define the path to the WordPress installation.
 // Adjust this if your WordPress installation is located elsewhere.
-define( 'AI_AGENT_WP_PATH', '/app/wordpress' ); // Standard path in this environment
+// define( 'AI_AGENT_WP_PATH', '/app/wordpress' ); // Standard path in this environment
+// Path definition is already in the main plugin file and should be fine.
+
+/**
+ * Handles the dispatch of CLI commands coming from the user interface.
+ * It can transform commands or pass them to the generic WP-CLI executor.
+ *
+ * @param string $command_string The raw command string from the user.
+ * @return string|false The output from the command, or false on error.
+ */
+function ai_agent_handle_cli_command( $command_string ) {
+    // Trim the command string to remove leading/trailing whitespace
+    $command_string = trim($command_string);
+
+    // Check for 'page create' command
+    if ( strpos( $command_string, 'page create' ) === 0 ) {
+        // Transform 'page create' to 'post create --post_type=page'
+        $transformed_command = preg_replace( '/^page create/', 'post create --post_type=page', $command_string, 1 );
+        if ($transformed_command === null) {
+            // error_log("AI Agent: preg_replace failed for 'page create' command: " . $command_string);
+            return "Error: Failed to transform 'page create' command.";
+        }
+        return ai_agent_execute_wp_cli_command( $transformed_command );
+    }
+    // For other commands like 'option update', 'option get', etc., pass them directly.
+    // These are assumed to be valid WP-CLI commands or will be handled by WP-CLI itself.
+    else {
+        return ai_agent_execute_wp_cli_command( $command_string );
+    }
+}
+
 
 /**
  * Executes a WP-CLI command and returns the output.
@@ -28,19 +58,34 @@ function ai_agent_execute_wp_cli_command( $command ) {
 
     // Execute the command
     // Using shell_exec. Consider alternatives like proc_open for more control if needed.
+    // Ensure $command is not empty after potential transformations
+    if (empty(trim($command))) {
+        // error_log("AI Agent: Attempted to execute an empty WP-CLI command.");
+        return "Error: Attempted to execute an empty command.";
+    }
     $output = shell_exec( $full_command );
 
     // For debugging: error_log( "WP-CLI output: " . $output );
 
     if ( $output === null ) {
-        // shell_exec can return null on error or if the command produces no output.
-        // It's important to distinguish actual errors if possible.
-        // For now, we'll return false, but more sophisticated error checking might be needed.
-        // error_log( "WP-CLI command failed or produced no output: " . $full_command );
-        return false;
+        // shell_exec returns null on error or if the command produces no output but exits with error status.
+        // It can also return an empty string for successful commands that genuinely have no output.
+        // A more robust solution might involve checking exit codes, which proc_open would allow.
+        // For now, we assume null indicates an execution problem or command produced no output and possibly failed.
+        // error_log( "WP-CLI command failed or produced null output: " . $full_command );
+
+        // To provide better feedback, let's try to capture stderr if possible, though shell_exec doesn't make this easy.
+        // For now, returning a generic error or false.
+        // Let's return a specific message that can be displayed to the user.
+        return "Command executed. Output was null (may indicate an error or no output).";
     }
 
-    return trim( $output );
+    $trimmed_output = trim( $output );
+    if ( $trimmed_output === "" ) {
+        return "Command executed successfully and produced no output.";
+    }
+
+    return $trimmed_output;
 }
 
 /**

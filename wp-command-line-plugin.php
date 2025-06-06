@@ -3,9 +3,9 @@
  * Plugin Name:       WP Command Line Interface
  * Plugin URI:        https://example.com/plugins/wp-command-line-interface/
  * Description:       Provides a command-line interface to execute WP-CLI commands from the WordPress admin.
- * Version:           1.0.0
- * Author:            Your Name or Company
- * Author URI:        https://example.com/
+ * Version:           1.1.0
+ * Author:            flek90
+ * Author URI:        https://flek90.aureusz.com
  * License:           GPL v2 or later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       wp-command-line-interface
@@ -28,13 +28,42 @@ require_once plugin_dir_path( __FILE__ ) . 'includes/wp-interaction.php';
 // Include admin settings page
 require_once plugin_dir_path( __FILE__ ) . 'includes/admin-settings-page.php';
 
+/**
+ * Returns the list of all manageable command bases.
+ * This function serves as the single source of truth for all commands this plugin can manage.
+ *
+ * @return array List of command base strings.
+ */
+function wpcli_get_all_manageable_commands() {
+    return [
+        'plugin list',
+        'plugin get',
+        'option get',
+        'option update',
+        'user list',
+        'user get',
+        'theme list',
+        'theme get',
+        'core version',
+        'site list',
+        'post list',
+        'comment list',
+        'page create',
+        // Future commands can be added here.
+    ];
+}
+
 add_action( 'admin_menu', 'wpcli_plugin_add_admin_menu' );
 add_action( 'admin_init', 'wpcli_plugin_register_settings' );
 add_action( 'wp_ajax_wpcli_command_handler', 'wpcli_command_handler_callback' );
 
 function wpcli_command_handler_callback() {
     // Verify nonce. The nonce name 'wpcli_nonce' should match what's sent from JS.
-    check_ajax_referer( 'wpcli_commands_nonce', 'wpcli_nonce' );
+    // Replaced check_ajax_referer to provide a JSON response on failure.
+    if ( ! isset( $_POST['wpcli_nonce'] ) || ! wp_verify_nonce( $_POST['wpcli_nonce'], 'wpcli_commands_nonce' ) ) {
+        wp_send_json_error( ['message' => 'Error: Nonce verification failed.'], 403 );
+        return;
+    }
 
     // Check user capabilities.
     if ( ! current_user_can( 'manage_options' ) ) {
@@ -50,47 +79,50 @@ function wpcli_command_handler_callback() {
         return;
     }
 
-    // **Security: Whitelist allowed commands.**
-    // For now, only allow specific commands.
-    // We check if the *start* of the submitted command matches one of the allowed bases.
-    $allowed_commands_base = [
-        'plugin list',
-        'plugin get',
-        'option get',
-        'user list',
-        'user get',
-        'theme list',
-        'theme get',
-        'core version',
-        'site list',
-        'post list',
-        'comment list',
-        // Add more safe, read-only commands as needed
-    ];
-
-    $command_is_allowed = false;
-    foreach ( $allowed_commands_base as $allowed_base ) {
-        if ( strpos( $command, $allowed_base ) === 0 ) {
-            // Further validation could be added here, e.g., checking for potentially harmful flags.
-            // For now, if the base matches, we allow it.
-            $command_is_allowed = true;
+    // **Security: Check if the command is active and allowed.**
+    // 1. Get the base of the entered command.
+    $entered_command_base = '';
+    $all_manageable_commands = wpcli_get_all_manageable_commands(); // Get all defined command bases
+    foreach ($all_manageable_commands as $manageable_base) {
+        if (strpos($command, $manageable_base) === 0) {
+            $entered_command_base = $manageable_base;
             break;
         }
     }
 
-    if ( ! $command_is_allowed ) {
-        wp_send_json_error( ['message' => 'Error: This command is not allowed.'], 403 );
+    if (empty($entered_command_base)) {
+        wp_send_json_error(['message' => 'Error: Unknown command.'], 400);
         return;
     }
 
-    // Execute the command.
-    // The ai_agent_execute_wp_cli_command function is in 'includes/wp-interaction.php'.
-    $output = ai_agent_execute_wp_cli_command( $command );
-
-    if ( $output === false ) {
-        wp_send_json_error( ['message' => 'Error: Failed to execute command or command returned no output.'], 500 );
+    // 2. Get the list of currently active commands from options.
+    // Defaults to all manageable commands being active if the option isn't set yet.
+    $active_commands_option = get_option('wpcli_plugin_active_commands');
+    if (false === $active_commands_option) { // Option not yet saved
+        $active_commands = array_fill_keys($all_manageable_commands, true);
     } else {
-        // The JS expects 'output' field for success, not 'reply'
+        $active_commands = (array) $active_commands_option;
+    }
+
+    // 3. Check if the entered command's base is in the active list and set to true.
+    if (!isset($active_commands[$entered_command_base]) || $active_commands[$entered_command_base] == false) {
+        wp_send_json_error(['message' => 'Error: This command is currently deactivated by the site administrator.'], 403);
+        return;
+    }
+
+    // Execute the command using the new handler.
+    // The ai_agent_handle_cli_command function is in 'includes/wp-interaction.php'.
+    $output = ai_agent_handle_cli_command( $command );
+
+    // Check if the output indicates an error explicitly returned by our handlers
+    // or if it's a generic 'false' which our old execute function might return (though less likely now).
+    // The new handler returns descriptive strings. We should check for "Error:" prefix or if $output is false.
+    if ( $output === false || (is_string($output) && strpos($output, 'Error:') === 0) ) {
+        // If $output is already an error message from our handler, use it. Otherwise, generic message.
+        $message = (is_string($output) && strpos($output, 'Error:') === 0) ? $output : 'Error: Failed to execute command.';
+        wp_send_json_error( ['message' => $message], 500 );
+    } else {
+        // The JS expects 'output' field for success
         wp_send_json_success( ['output' => $output] );
     }
 }
@@ -135,6 +167,7 @@ function wpcli_plugin_enqueue_admin_assets() {
         [
             'ajaxUrl' => admin_url( 'admin-ajax.php' ),
             'nonce'   => wp_create_nonce( 'wpcli_commands_nonce' ),
+            'shortcut'=> get_option( 'wpcli_plugin_keyboard_shortcut', 'ctrl+i' ), // Add shortcut
             // We can also pass the initial list of allowed commands if JS needs it,
             // but for now, it's mainly for the AJAX call.
         ]

@@ -53,27 +53,53 @@ function wpcli_plugin_register_settings() {
     // General Tab Settings (Placeholder)
     register_setting(
         'wpcli_plugin_general_settings_group',
-        'wpcli_plugin_allowed_commands', // Example, not fully implemented for user input yet
-         [
-            'type'              => 'string', // Or array
-            'sanitize_callback' => 'sanitize_textarea_field',
-            'default'           => "plugin list
-option get
-user list", // Default example
+        'wpcli_plugin_active_commands', // Changed option name
+        [
+            'type'              => 'array',
+            'sanitize_callback' => 'wpcli_sanitize_active_commands', // Custom sanitize callback
+            'default'           => [], // Default to empty, handler will enable all if not set
         ]
     );
-     add_settings_section(
+
+    add_settings_section(
         'wpcli_plugin_general_section',
-        __( 'Command Management', 'wp-command-line-interface' ),
+        __( 'Command Activation Management', 'wp-command-line-interface' ), // Changed title
         null,
         'wp_command_line_plugin_general'
     );
+
     add_settings_field(
-        'wpcli_plugin_allowed_commands_field',
-        __( 'Allowed Commands (Informational)', 'wp-command-line-interface' ),
-        'wpcli_plugin_allowed_commands_field_html',
+        'wpcli_plugin_active_commands_field', // Changed ID
+        __( 'Activate/Deactivate Commands', 'wp-command-line-interface' ), // Changed title
+        'wpcli_plugin_active_commands_field_html', // Changed callback
         'wp_command_line_plugin_general',
         'wpcli_plugin_general_section'
+    );
+
+    // Keyboard Shortcut Tab Settings
+    register_setting(
+        'wpcli_plugin_shortcut_settings_group', // Option group
+        'wpcli_plugin_keyboard_shortcut',       // Option name
+        [
+            'type'              => 'string',
+            'sanitize_callback' => 'sanitize_text_field',
+            'default'           => 'ctrl+i',
+        ]
+    );
+
+    add_settings_section(
+        'wpcli_plugin_shortcut_section',         // ID
+        __( 'Keyboard Shortcut Configuration', 'wp-command-line-interface' ), // Title
+        null,                                   // Callback (optional)
+        'wp_command_line_plugin_shortcut'       // Page slug for this section
+    );
+
+    add_settings_field(
+        'wpcli_plugin_keyboard_shortcut_field', // ID
+        __( 'CLI Toggle Shortcut', 'wp-command-line-interface' ), // Title
+        'wpcli_plugin_keyboard_shortcut_field_html', // Callback function to render the field
+        'wp_command_line_plugin_shortcut',        // Page slug
+        'wpcli_plugin_shortcut_section'         // Section ID
     );
 }
 
@@ -109,6 +135,96 @@ function wpcli_plugin_allowed_commands_field_html() {
     <?php
 }
 
+
+/**
+ * Sanitize callback for the 'wpcli_plugin_active_commands' option.
+ *
+ * @param array $input The input array from the settings page.
+ * @return array Sanitized array of active commands.
+ */
+function wpcli_sanitize_active_commands( $input ) {
+    $sanitized_input = [];
+    $all_manageable_commands = function_exists('wpcli_get_all_manageable_commands') ? wpcli_get_all_manageable_commands() : [];
+
+    if ( ! is_array( $input ) ) {
+        // If input is not an array, it might mean all checkboxes were unchecked.
+        // In this case, all known commands should be marked as false (inactive).
+        foreach ( $all_manageable_commands as $command_base ) {
+            $sanitized_input[ $command_base ] = false;
+        }
+        return $sanitized_input;
+    }
+
+    foreach ( $all_manageable_commands as $command_base ) {
+        // A command is active if its key exists in the input array and the value is '1' (from checkbox).
+        // Otherwise, it's considered inactive (false).
+        $sanitized_input[ $command_base ] = isset( $input[ $command_base ] ) && $input[ $command_base ] == '1';
+    }
+
+    return $sanitized_input;
+}
+
+/**
+ * Render the checkboxes for 'Activate/Deactivate Commands'.
+ */
+function wpcli_plugin_active_commands_field_html() {
+    // Get all manageable commands (defined in the main plugin file)
+    $all_manageable_commands = function_exists('wpcli_get_all_manageable_commands') ? wpcli_get_all_manageable_commands() : [];
+
+    // Get the currently saved active commands
+    $active_commands_option = get_option( 'wpcli_plugin_active_commands' );
+
+    // If the option is not set yet (false), default all manageable commands to true (active).
+    // This ensures that on first view, all commands appear enabled.
+    if ( false === $active_commands_option ) {
+        $active_commands = array_fill_keys( $all_manageable_commands, true );
+    } else {
+        $active_commands = (array) $active_commands_option;
+    }
+
+    if ( empty( $all_manageable_commands ) ) {
+        echo '<p>' . esc_html__( 'No manageable commands found. Ensure `wpcli_get_all_manageable_commands()` is defined and returns commands.', 'wp-command-line-interface' ) . '</p>';
+        return;
+    }
+    ?>
+    <p><?php esc_html_e( 'Select the commands that should be active and usable in the Command Line Interface.', 'wp-command-line-interface' ); ?></p>
+    <fieldset>
+        <legend class="screen-reader-text"><span><?php esc_html_e( 'Commands Activation', 'wp-command-line-interface' ); ?></span></legend>
+        <?php foreach ( $all_manageable_commands as $command_base ) : ?>
+            <?php
+            // Ensure every command from the main list has an entry in $active_commands for the checkbox
+            $is_active = isset( $active_commands[ $command_base ] ) ? (bool) $active_commands[ $command_base ] : true; // Default to true if new command not in option yet
+            $field_id = 'wpcli_active_cmd_' . sanitize_key( $command_base );
+            ?>
+            <label for="<?php echo esc_attr( $field_id ); ?>" style="display: block; margin-bottom: 5px;">
+                <input type="checkbox"
+                       id="<?php echo esc_attr( $field_id ); ?>"
+                       name="wpcli_plugin_active_commands[<?php echo esc_attr( $command_base ); ?>]"
+                       value="1"
+                       <?php checked( $is_active, true ); ?>>
+                <code><?php echo esc_html( $command_base ); ?></code>
+            </label>
+        <?php endforeach; ?>
+    </fieldset>
+    <?php
+}
+
+
+/**
+ * Render the text input field for 'CLI Toggle Shortcut'.
+ */
+function wpcli_plugin_keyboard_shortcut_field_html() {
+    $option = get_option( 'wpcli_plugin_keyboard_shortcut', 'ctrl+i' );
+    ?>
+    <input type="text" id="wpcli_plugin_keyboard_shortcut" name="wpcli_plugin_keyboard_shortcut" value="<?php echo esc_attr( $option ); ?>" class="regular-text">
+    <p class="description">
+        <?php esc_html_e( 'Define the keyboard shortcut to toggle the Command Line Interface.', 'wp-command-line-interface' ); ?>
+        <?php esc_html_e( 'Use combinations like "ctrl+i", "alt+m", "ctrl+shift+k". Supported modifiers: ctrl, alt, shift.', 'wp-command-line-interface' ); ?>
+        <?php esc_html_e( 'Use lowercase letters for keys (e.g., "i" not "I").', 'wp-command-line-interface' ); ?>
+    </p>
+    <?php
+}
+
 /**
  * Render the HTML for the settings page.
  */
@@ -130,20 +246,26 @@ function wpcli_plugin_settings_page_html() {
             <a href="?page=wp_command_line_plugin&tab=general" class="nav-tab <?php echo $active_tab == 'general' ? 'nav-tab-active' : ''; ?>">
                 <?php esc_html_e( 'General Settings', 'wp-command-line-interface' ); ?>
             </a>
+            <a href="?page=wp_command_line_plugin&tab=shortcut" class="nav-tab <?php echo $active_tab == 'shortcut' ? 'nav-tab-active' : ''; ?>">
+                <?php esc_html_e( 'Keyboard Shortcut', 'wp-command-line-interface' ); ?>
+            </a>
         </h2>
 
         <form action="options.php" method="post">
             <?php
             if ( $active_tab == 'styling' ) {
-                settings_fields( 'wpcli_plugin_styling_settings_group' ); // Nonce, action, option_page fields
-                do_settings_sections( 'wp_command_line_plugin_styling' ); // Output sections and fields for this tab
+                settings_fields( 'wpcli_plugin_styling_settings_group' );
+                do_settings_sections( 'wp_command_line_plugin_styling' );
             } elseif ( $active_tab == 'general' ) {
                 settings_fields( 'wpcli_plugin_general_settings_group' );
                 do_settings_sections( 'wp_command_line_plugin_general' );
+            } elseif ( $active_tab == 'shortcut' ) {
+                settings_fields( 'wpcli_plugin_shortcut_settings_group' );
+                do_settings_sections( 'wp_command_line_plugin_shortcut' );
             }
 
-            // Submit button only if there are settings to save on the current tab
-            if ($active_tab == 'styling') { // Only styling tab has a savable option for now
+            // Submit button for tabs that have savable options
+            if ( $active_tab == 'styling' || $active_tab == 'shortcut' || $active_tab == 'general' ) {
                  submit_button( __( 'Save Settings', 'wp-command-line-interface' ) );
             }
             ?>
