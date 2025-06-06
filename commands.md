@@ -29,10 +29,17 @@ You can use these commands with their standard WP-CLI arguments and flags, as lo
     *   Example: `post list --post_type=page --posts_per_page=5`
 *   `comment list` - List comments.
     *   Example: `comment list --post_id=1 --number=10`
+*   `page create` - Create a new page.
+    *   Example: `page create --title="My Awesome Page"`
+    *   Example: `page create --title="Draft Page" --status=draft`
+    *   Example: `page create --title="Detailed Page" --status=publish --content="This is the content of my new page."`
+*   `option update <option-name> <option-value>` - Update an existing site option.
+    *   Example: `option update my_custom_option "New Value"`
+    *   Example: `option update some_setting '{"enabled": true, "items": [1,2,3]}' --format=json` (Note: ensure JSON is valid)
 
 ## Important Notes:
 
-*   **Security:** The command whitelist is in place to prevent accidental or malicious execution of potentially harmful commands.
-*   **Parameters:** You can use most standard parameters and flags associated with these commands (e.g., `--status=active`, `--fields=name,version`, `--format=json`). However, ensure the base command (e.g., `plugin list`) matches exactly.
+*   **Security:** The command whitelist is in place to prevent accidental or malicious execution of potentially harmful commands. Additionally, commands can be individually activated or deactivated via the plugin's settings page in the WordPress admin area (under "WP Command Line" -> "General Settings").
+*   **Parameters:** You can use most standard parameters and flags associated with these commands (e.g., `--status=active`, `--fields=name,version`, `--format=json`). However, ensure the base command (e.g., `plugin list`) matches exactly one of the enabled commands.
 *   **Output:** The output from the command will be displayed directly in the interface. Some commands might produce verbose output.
 *   **Updates:** This list may be updated in future versions of the plugin.

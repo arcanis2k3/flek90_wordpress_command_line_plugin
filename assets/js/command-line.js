@@ -138,4 +138,60 @@ jQuery(document).ready(function($) {
     }
 
     // Admin bar toggle logic removed as it's not part of this plugin's scope for now
+
+    // Keyboard shortcut functionality
+    function parseShortcut(shortcutString) {
+        if (typeof shortcutString !== 'string' || shortcutString.trim() === '') {
+            return null;
+        }
+        const parts = shortcutString.toLowerCase().split('+').map(p => p.trim());
+        const shortcut = {
+            ctrlKey: false,
+            altKey: false,
+            shiftKey: false,
+            key: ''
+        };
+
+        for (const part of parts) {
+            if (part === 'ctrl') shortcut.ctrlKey = true;
+            else if (part === 'alt') shortcut.altKey = true;
+            else if (part === 'shift') shortcut.shiftKey = true;
+            else if (part.length === 1) shortcut.key = part;
+            else return null; // Invalid part
+        }
+
+        if (!shortcut.key) return null; // Key is mandatory
+        return shortcut;
+    }
+
+    let configuredShortcutString = (typeof wpcliCmdAjax !== 'undefined' && wpcliCmdAjax.shortcut) ? wpcliCmdAjax.shortcut : 'ctrl+i';
+    let activeShortcut = parseShortcut(configuredShortcutString);
+
+    if (!activeShortcut) {
+        // console.log('WP CLI jQuery: Invalid or empty shortcut configured ("' + configuredShortcutString + '"), defaulting to ctrl+i.');
+        activeShortcut = parseShortcut('ctrl+i');
+    }
+
+    if (activeShortcut) {
+        $(document).on('keydown', function(e) {
+            // Normalize event.key for older browsers if necessary, though 'i', 'k', etc. are standard
+            const keyPressed = e.key.toLowerCase();
+
+            if (
+                e.ctrlKey === activeShortcut.ctrlKey &&
+                e.altKey === activeShortcut.altKey &&
+                e.shiftKey === activeShortcut.shiftKey &&
+                keyPressed === activeShortcut.key
+            ) {
+                e.preventDefault();
+                $cliWindow.toggle();
+                if ($cliWindow.is(':visible')) {
+                    $cliInput.focus();
+                }
+            }
+        });
+    } else {
+        // This should ideally not happen if default is correctly parsed
+        // console.log('WP CLI jQuery: Failed to set up keyboard shortcut.');
+    }
 });

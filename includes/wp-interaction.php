@@ -6,42 +6,656 @@
 
 // Define the path to the WordPress installation.
 // Adjust this if your WordPress installation is located elsewhere.
-define( 'AI_AGENT_WP_PATH', '/app/wordpress' ); // Standard path in this environment
+// define( 'AI_AGENT_WP_PATH', '/app/wordpress' ); // Standard path in this environment
+// Path definition is already in the main plugin file and should be fine.
+
 
 /**
- * Executes a WP-CLI command and returns the output.
- *
- * @param string $command The WP-CLI command to execute (without 'wp ' prefix).
- * @return string|false The output from the command, or false on error.
- *
- * @note This function serves as the primary, structured, and safer interface for executing WP-CLI commands.
- *       It ensures that commands are run with necessary path and user context. Direct passthrough
- *       of arbitrary commands is avoided by design to reduce security risks. All WP-CLI interactions
- *       within this plugin should ideally use this helper or specific wrapper functions built upon it.
+ * Handles 'core version' command using native WordPress functions.
+ * @param array $args Associative array of arguments (e.g., for --extra, though not implemented via get_bloginfo).
+ * @return string WordPress version string.
  */
-function ai_agent_execute_wp_cli_command( $command ) {
-    // Ensure WP-CLI path is correct and WordPress path is specified.
-    // --allow-root is used because a web server user (like www-data) might run this.
-    $full_command = 'wp ' . $command . ' --path=' . AI_AGENT_WP_PATH . ' --allow-root';
+function php_handle_core_version(array $args) {
+    // The basic WordPress version. get_bloginfo('version') doesn't support --extra like WP-CLI.
+    // If --extra functionality (DB version, etc.) is needed, this would require more specific calls
+    // or sticking to WP-CLI for this specific flag. For now, just the version.
+    if (isset($args['extra'])) {
+        // Simulate WP-CLI --extra roughly: version, db_version, locale, site_url, home_url
+        // This is a simplified example. WP-CLI does more.
+        global $wp_db_version;
+        $output_lines = [];
+        $output_lines[] = "WordPress version: " . get_bloginfo('version');
+        $output_lines[] = "Database revision: " . $wp_db_version;
+        $output_lines[] = "Site language: " . get_locale();
+        $output_lines[] = "Site URL: " . site_url();
+        $output_lines[] = "Home URL: " . home_url();
+        return implode("\n", $output_lines);
+    }
+    return get_bloginfo('version');
+}
 
-    // For debugging: error_log( "Executing WP-CLI command: " . $full_command );
 
-    // Execute the command
-    // Using shell_exec. Consider alternatives like proc_open for more control if needed.
-    $output = shell_exec( $full_command );
+/**
+ * Handles 'user list' command using native WordPress functions.
+ * @param array $args Associative array of arguments for WP_User_Query.
+ * @return string Formatted list of users or message.
+ */
+function php_handle_user_list(array $args) {
+    $query_args = ['count_total' => false]; // Don't need total count for simple list display
 
-    // For debugging: error_log( "WP-CLI output: " . $output );
+    if (isset($args['role'])) {
+        $query_args['role'] = $args['role'];
+    }
+    if (isset($args['number']) && is_numeric($args['number'])) {
+        $query_args['number'] = intval($args['number']);
+    } else {
+        $query_args['number'] = 10; // Default to 10 users
+    }
+    if (isset($args['orderby'])) {
+        $allowed_orderby = ['ID', 'login', 'nicename', 'email', 'url', 'registered', 'display_name', 'post_count', 'meta_value'];
+        if (in_array($args['orderby'], $allowed_orderby)) {
+            $query_args['orderby'] = $args['orderby'];
+        }
+    }
+    if (isset($args['order']) && in_array(strtoupper($args['order']), ['ASC', 'DESC'])) {
+        $query_args['order'] = strtoupper($args['order']);
+    }
+    if (isset($args['search'])) {
+        // Allows searching for users by matching a term in their user_login, user_email, user_url, user_nicename, or display_name.
+        $query_args['search'] = '*' . trim($args['search'], '*') . '*'; // Add wildcards for partial match
+        $query_args['search_columns'] = ['user_login', 'user_email', 'user_url', 'user_nicename', 'display_name'];
+    }
+    // Add more supported args like 'fields', 'offset', 'paged' as needed.
 
-    if ( $output === null ) {
-        // shell_exec can return null on error or if the command produces no output.
-        // It's important to distinguish actual errors if possible.
-        // For now, we'll return false, but more sophisticated error checking might be needed.
-        // error_log( "WP-CLI command failed or produced no output: " . $full_command );
-        return false;
+    $users = get_users($query_args);
+    $output_lines = [];
+
+    if (empty($users)) {
+        return "No users found matching criteria.";
     }
 
-    return trim( $output );
+    foreach ($users as $user) {
+        $output_lines[] = "ID: " . $user->ID;
+        $output_lines[] = "Login: " . esc_html($user->user_login);
+        $output_lines[] = "Display Name: " . esc_html($user->display_name);
+        $output_lines[] = "Email: " . esc_html($user->user_email);
+        $output_lines[] = "Roles: " . (!empty($user->roles) ? esc_html(implode(', ', $user->roles)) : '(none)');
+        $output_lines[] = "---";
+    }
+
+    return implode("\n", $output_lines);
 }
+
+/**
+ * Handles 'user get' command using native WordPress functions.
+ * @param array $args Array containing the user identifier (ID, login, slug, or email).
+ * @return string Formatted user details or error message.
+ */
+function php_handle_user_get(array $args) {
+    if (empty($args[0]) || !is_string($args[0]) || trim($args[0]) === '') {
+        return "Error: User ID, login, slug, or email required for 'user get'.";
+    }
+    $identifier = trim($args[0]);
+    $user_data = null;
+
+    if (is_numeric($identifier)) {
+        $user_data = get_user_by('ID', intval($identifier));
+    }
+    if (!$user_data) {
+        $user_data = get_user_by('login', $identifier);
+    }
+    if (!$user_data) {
+        $user_data = get_user_by('slug', $identifier); // User slug is user_nicename
+    }
+    if (!$user_data) {
+        $user_data = get_user_by('email', $identifier);
+    }
+
+    if (!$user_data) {
+        return "Error: User '" . esc_html($identifier) . "' not found.";
+    }
+
+    $output_lines = [];
+    $output_lines[] = "ID: " . $user_data->ID;
+    $output_lines[] = "Login: " . esc_html($user_data->user_login);
+    $output_lines[] = "Display Name: " . esc_html($user_data->display_name);
+    $output_lines[] = "Nice Name (Slug): " . esc_html($user_data->user_nicename);
+    $output_lines[] = "Email: " . esc_html($user_data->user_email);
+    $output_lines[] = "Registered Date: " . esc_html($user_data->user_registered);
+    $output_lines[] = "Roles: " . (!empty($user_data->roles) ? esc_html(implode(', ', $user_data->roles)) : '(none)');
+    $output_lines[] = "Website: " . esc_html($user_data->user_url);
+    // Add more fields as desired
+
+    return implode("\n", $output_lines);
+}
+
+
+/**
+ * Handles 'theme list' command using native WordPress functions.
+ * @param array $args Associative array of arguments, e.g., ['status' => 'active'].
+ * @return string Formatted list of themes or message.
+ */
+function php_handle_theme_list(array $args) {
+    $all_themes = wp_get_themes(['allowed' => null]); // Get all themes
+    $output_lines = [];
+    $requested_status = isset($args['status']) ? strtolower(trim($args['status'])) : null;
+    $current_theme_stylesheet = get_stylesheet();
+
+    if (empty($all_themes)) {
+        return "No themes installed.";
+    }
+
+    foreach ($all_themes as $theme_slug => $theme_obj) {
+        $status_str = ($theme_slug === $current_theme_stylesheet) ? 'Active' : 'Inactive';
+
+        if ($requested_status) {
+            if ($requested_status === 'active' && $status_str !== 'Active') {
+                continue;
+            }
+            if ($requested_status === 'inactive' && $status_str !== 'Inactive') {
+                continue;
+            }
+        }
+
+        $output_lines[] = "Name: " . $theme_obj->get('Name');
+        $output_lines[] = "Slug: " . $theme_slug; // Stylesheet slug
+        $output_lines[] = "Status: " . $status_str;
+        $output_lines[] = "Version: " . $theme_obj->get('Version');
+        $output_lines[] = "---";
+    }
+
+    if (empty($output_lines)) {
+        return "No themes found matching criteria" . ($requested_status ? " (status: " . esc_html($requested_status) . ")" : "") . ".";
+    }
+
+    return implode("\n", $output_lines);
+}
+
+/**
+ * Handles 'theme activate' command using native WordPress functions.
+ * @param array $args Array containing the theme's stylesheet slug.
+ * @return string Success, notice, or error message.
+ */
+function php_handle_theme_activate(array $args) {
+    if (empty($args[0]) || !is_string($args[0]) || trim($args[0]) === '') {
+        return "Error: Theme stylesheet (slug) required for activation.";
+    }
+    $theme_to_activate_slug = trim($args[0]);
+
+    $theme = wp_get_theme($theme_to_activate_slug);
+    if (!$theme->exists()) {
+        return "Error: Theme '" . esc_html($theme_to_activate_slug) . "' does not exist.";
+    }
+    if (!$theme->is_allowed()) {
+        // This checks for network enabled themes in multisite, or broken themes.
+        return "Error: Theme '" . esc_html($theme_to_activate_slug) . "' is not allowed for activation (possibly broken or not network-enabled).";
+    }
+
+    if (get_stylesheet() === $theme_to_activate_slug) {
+        return "Notice: Theme '" . esc_html($theme_to_activate_slug) . "' is already active.";
+    }
+
+    try {
+        switch_theme($theme_to_activate_slug);
+        // The 'after_switch_theme' action is hooked by WordPress core after switch_theme completes.
+        // Explicitly calling it here is generally not necessary unless specific re-initialization is needed
+        // outside of the standard theme switch hooks. For most cases, switch_theme() is sufficient.
+        // do_action('after_switch_theme', $theme->get_stylesheet(), $theme);
+
+    } catch (Exception $e) {
+        return "Error: Failed to activate theme '" . esc_html($theme_to_activate_slug) . "'. Exception: " . $e->getMessage();
+    }
+
+    // Verify activation
+    if (get_stylesheet() === $theme_to_activate_slug) {
+        return "Success: Theme '" . esc_html($theme_to_activate_slug) . "' activated.";
+    } else {
+        // This state might indicate a problem if switch_theme didn't throw an error but also didn't switch.
+        // Or if the theme switch caused a fatal error that broke the current request flow before this check.
+        return "Error: Failed to activate theme '" . esc_html($theme_to_activate_slug) . "'. Current active theme is still '" . esc_html(get_stylesheet()) . "'. Check for errors during theme switching.";
+    }
+}
+
+
+/**
+ * Ensures plugin functions are available.
+ */
+function ensure_plugin_functions_loaded() {
+    if (!function_exists('get_plugins')) {
+        require_once ABSPATH . 'wp-admin/includes/plugin.php';
+    }
+}
+
+/**
+ * Handles 'plugin list' command using native WordPress functions.
+ * @param array $args Associative array of arguments, e.g., ['status' => 'active'].
+ * @return string Formatted list of plugins or message.
+ */
+function php_handle_plugin_list(array $args) {
+    ensure_plugin_functions_loaded();
+    $all_plugins = get_plugins();
+    $output_lines = [];
+    $requested_status = isset($args['status']) ? strtolower(trim($args['status'])) : null;
+
+    if (empty($all_plugins)) {
+        return "No plugins installed.";
+    }
+
+    foreach ($all_plugins as $plugin_file => $plugin_data) {
+        $status_str = 'Inactive';
+        $is_active = is_plugin_active($plugin_file);
+        if ($is_active) {
+            $status_str = 'Active';
+        }
+        // TODO: Add more detailed status like 'must-use', 'dropins' if necessary.
+
+        if ($requested_status) {
+            if ($requested_status === 'active' && !$is_active) {
+                continue;
+            }
+            if ($requested_status === 'inactive' && $is_active) {
+                continue;
+            }
+            // Add more status filters if needed
+        }
+
+        $output_lines[] = "Name: " . $plugin_data['Name'];
+        $output_lines[] = "Status: " . $status_str;
+        $output_lines[] = "Version: " . $plugin_data['Version'];
+        $output_lines[] = "Plugin File: " . $plugin_file; // Useful for activate/deactivate
+        $output_lines[] = "---";
+    }
+
+    if (empty($output_lines)) {
+        return "No plugins found matching criteria" . ($requested_status ? " (status: " . esc_html($requested_status) . ")" : "") . ".";
+    }
+
+    return implode("\n", $output_lines);
+}
+
+/**
+ * Handles 'plugin activate' command using native WordPress functions.
+ * @param array $args Array containing the plugin slug/file.
+ * @return string Success, notice, or error message.
+ */
+function php_handle_plugin_activate(array $args) {
+    ensure_plugin_functions_loaded();
+    if (empty($args[0]) || !is_string($args[0]) || trim($args[0]) === '') {
+        return "Error: Plugin slug/file (e.g., 'akismet/akismet.php') required for activation.";
+    }
+    $plugin_to_activate = trim($args[0]);
+
+    if (is_plugin_active($plugin_to_activate)) {
+        return "Notice: Plugin '" . esc_html($plugin_to_activate) . "' is already active.";
+    }
+
+    // The activate_plugin function expects the plugin path relative to the plugins directory.
+    // Example: 'akismet/akismet.php'
+    // The third parameter `true` makes it silent (no redirects or output).
+    $result = activate_plugin($plugin_to_activate, '', false, true);
+
+    if (is_wp_error($result)) {
+        return "Error: Failed to activate plugin '" . esc_html($plugin_to_activate) . "'. " . $result->get_error_message();
+    }
+    // activate_plugin returns null on success.
+    if ($result === null) {
+         if (is_plugin_active($plugin_to_activate)) { // Double check
+            return "Success: Plugin '" . esc_html($plugin_to_activate) . "' activated.";
+        } else {
+            // This case might happen if the plugin had a fatal error on activation that activate_plugin didn't catch as WP_Error
+            return "Error: Failed to activate plugin '" . esc_html($plugin_to_activate) . "'. The plugin did not activate as expected.";
+        }
+    }
+    // If $result is false, it means it was already active, but we checked this already.
+    // However, keeping a fallback.
+    return "Notice: Plugin '" . esc_html($plugin_to_activate) . "' might already be active or an unknown issue occurred.";
+}
+
+/**
+ * Handles 'plugin deactivate' command using native WordPress functions.
+ * @param array $args Array containing the plugin slug/file.
+ * @return string Success, notice, or error message.
+ */
+function php_handle_plugin_deactivate(array $args) {
+    ensure_plugin_functions_loaded();
+    if (empty($args[0]) || !is_string($args[0]) || trim($args[0]) === '') {
+        return "Error: Plugin slug/file (e.g., 'akismet/akismet.php') required for deactivation.";
+    }
+    $plugin_to_deactivate = trim($args[0]);
+
+    if (!is_plugin_active($plugin_to_deactivate)) {
+        return "Notice: Plugin '" . esc_html($plugin_to_deactivate) . "' was already inactive.";
+    }
+
+    // The second parameter `true` makes it silent.
+    deactivate_plugins($plugin_to_deactivate, true, null);
+
+    // Verify deactivation
+    if (!is_plugin_active($plugin_to_deactivate)) {
+        return "Success: Plugin '" . esc_html($plugin_to_deactivate) . "' deactivated.";
+    } else {
+        return "Error: Failed to deactivate plugin '" . esc_html($plugin_to_deactivate) . "'. The plugin might still be active.";
+    }
+}
+
+
+/**
+ * Parses a string of CLI-like arguments into an associative array.
+ * Handles --key=value, --key="quoted value", and --flag.
+ *
+ * @param string $arg_string The string of arguments.
+ * @return array Associative array of arguments.
+ */
+function parse_cli_like_args($arg_string) {
+    $args = [];
+    // Regex to capture --key=value, --key="value with spaces", or --flag
+    // --(\w[-\w]*)             : Captures the key (e.g., title, post-status)
+    // (?:                       : Start of non-capturing group for the value part
+    //   =                       : Equals sign
+    //   (?:"([^"]*)"|([^"\s]*)) : Either a double-quoted string (capture content in group 3)
+    //                           : OR an unquoted string without spaces (capture in group 4)
+    // )?                        : The entire value part is optional (for flags)
+    preg_match_all('/--(\w[-\w]*)(?:=(?:"([^"]*)"|([^"\s]*)))?/', $arg_string, $matches, PREG_SET_ORDER);
+
+    foreach ($matches as $match) {
+        $key = $match[1];
+        // Value is in $match[2] (quoted) or $match[3] (unquoted). If neither, it's a flag (true).
+        if (isset($match[2]) && $match[2] !== '') { // Quoted value
+            $args[$key] = $match[2];
+        } elseif (isset($match[3]) && $match[3] !== '') { // Unquoted value
+            $args[$key] = $match[3];
+        } else { // Flag
+            $args[$key] = true;
+        }
+    }
+    return $args;
+}
+
+/**
+ * Handles 'page create' command using native WordPress functions.
+ * @param array $args Associative array of page arguments (e.g., from parse_cli_like_args).
+ * @return string Success or error message.
+ */
+function php_handle_page_create(array $args) {
+    if (empty($args['title']) || !is_string($args['title']) || trim($args['title']) === '') {
+        return "Error: --title is required and cannot be empty for page creation.";
+    }
+
+    $post_data = ['post_type' => 'page'];
+    $post_data['post_title'] = trim($args['title']);
+
+    if (isset($args['content']) && is_string($args['content'])) {
+        $post_data['post_content'] = $args['content'];
+    }
+
+    $allowed_statuses = ['publish', 'draft', 'pending', 'private'];
+    if (isset($args['status']) && is_string($args['status']) && in_array(strtolower($args['status']), $allowed_statuses, true)) {
+        $post_data['post_status'] = strtolower($args['status']);
+    } else {
+        $post_data['post_status'] = 'draft'; // Default status
+    }
+
+    if (isset($args['author'])) {
+        if (is_numeric($args['author'])) {
+            $user = get_user_by('ID', (int)$args['author']);
+            if ($user) {
+                $post_data['post_author'] = $user->ID;
+            } else {
+                return "Error: Author ID '" . esc_html($args['author']) . "' not found.";
+            }
+        } else if (is_string($args['author'])) {
+            $user = get_user_by('login', $args['author']) ?: get_user_by('email', $args['author']);
+            if ($user) {
+                $post_data['post_author'] = $user->ID;
+            } else {
+                return "Error: Author login/email '" . esc_html($args['author']) . "' not found.";
+            }
+        }
+    } else {
+        $post_data['post_author'] = get_current_user_id(); // Default to current user
+    }
+
+    if (isset($args['date']) && is_string($args['date'])) {
+        $timestamp = strtotime($args['date']);
+        if ($timestamp) {
+            $post_data['post_date'] = get_date_from_gmt(date('Y-m-d H:i:s', $timestamp), 'Y-m-d H:i:s');
+        } else {
+            return "Error: Invalid date format for --date. Please use a recognizable date/time string.";
+        }
+    }
+
+    if (isset($args['slug']) && is_string($args['slug'])) {
+        $post_data['post_name'] = sanitize_title($args['slug']);
+    }
+
+    // Example for a custom field if needed, e.g. --meta_key=field_name --meta_value=value
+    // if (isset($args['meta_key']) && isset($args['meta_value'])) {
+    //     $post_data['meta_input'] = [$args['meta_key'] => $args['meta_value']];
+    // }
+
+    $post_id = wp_insert_post($post_data, true); // true for WP_Error on failure
+
+    if (is_wp_error($post_id)) {
+        return "Error: Failed to create page. " . $post_id->get_error_message();
+    } else {
+        $page_link = get_permalink($post_id);
+        return "Success: Page created with ID {$post_id}. Link: {$page_link}";
+    }
+}
+
+
+/**
+ * Handles 'option get' command using native WordPress functions.
+ * @param array $args Array containing the option name.
+ * @return string Formatted option value or error/notice message.
+ */
+function php_handle_option_get(array $args) {
+    if (count($args) !== 1 || empty(trim($args[0]))) {
+        return "Error: `option get` requires exactly one non-empty argument: option_name.";
+    }
+    $option_name = trim($args[0]);
+
+    // Check if option exists
+    $default_value_for_check = uniqid('__non_existent_option_check_');
+    $value = get_option($option_name, $default_value_for_check);
+
+    if ($value === $default_value_for_check) {
+        return "Notice: Option '" . esc_html($option_name) . "' not found.";
+    }
+
+    // Format output value
+    if (is_bool($value)) {
+        return $value ? 'true' : 'false';
+    } elseif (is_array($value) || is_object($value)) {
+        return json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    } elseif (is_null($value)) {
+        return '(null)'; // Or an empty string like ''
+    } else {
+        return (string)$value;
+    }
+}
+
+/**
+ * Handles 'option update' command using native WordPress functions.
+ * @param array $args Array containing option name and value string.
+ * @return string Success, notice, or error message.
+ */
+function php_handle_option_update(array $args) {
+    if (count($args) < 1 || empty(trim($args[0]))) {
+        return "Error: `option update` requires at least an option_name.";
+    }
+    if (count($args) < 2) {
+        // Assuming an empty string value is intentional if only option_name is provided by parser
+        // This case might be hit if parser sends [option_name, ""]
+        // But if parser sends only [option_name], it's an arg count error for value.
+        // The current parser logic in ai_agent_handle_cli_command will ensure 2 args,
+        // where the second can be an empty string.
+        // So, this specific check might be redundant if parser guarantees two elements.
+        // For safety:
+        return "Error: `option update` requires option_name and option_value. To set an empty string, provide it explicitly (e.g., option update my_option \"\").";
+    }
+
+    $option_name = trim($args[0]);
+    $option_value_string = $args[1]; // Value string is the second element
+
+    $option_value;
+    $trimmed_val_str = trim($option_value_string);
+
+    if (strtolower($trimmed_val_str) === 'true') {
+        $option_value = true;
+    } elseif (strtolower($trimmed_val_str) === 'false') {
+        $option_value = false;
+    } elseif (strtolower($trimmed_val_str) === 'null') {
+        $option_value = null; // WordPress will often convert this to "" when saving if option is expected to be string.
+    } elseif (strval(intval($trimmed_val_str)) === $trimmed_val_str && is_numeric($trimmed_val_str)) { // Check if it's an integer string
+        $option_value = intval($trimmed_val_str);
+    } elseif (strval(floatval($trimmed_val_str)) === $trimmed_val_str && is_numeric($trimmed_val_str)) { // Check if it's a float string
+        $option_value = floatval($trimmed_val_str);
+    } elseif ( (strpos($trimmed_val_str, '[') === 0 || strpos($trimmed_val_str, '{') === 0) &&
+               ($decoded = json_decode($option_value_string, true)) !== null &&
+               json_last_error() === JSON_ERROR_NONE ) {
+        // Only attempt JSON decode if it starts with [ or { and is valid JSON
+        $option_value = $decoded;
+    } else {
+        $option_value = $option_value_string; // Treat as a plain string (wp_unslash might be needed if WP adds slashes)
+                                             // update_option handles sanitization and slashing.
+    }
+
+    // Note: WordPress's update_option() function handles the data serialization (e.g., for arrays/objects) itself.
+    // It also handles sanitization for core options, but custom options are saved as is.
+    $current_value = get_option($option_name); // Get current value to compare for "no change" scenario
+
+    if (get_option($option_name, $default_value_for_check = uniqid()) === $default_value_for_check && $current_value === $option_value) {
+        // This means the option does not exist, and we are trying to set it to its default value (e.g. false for non-existent option)
+        // or trying to set a new option to a value that get_option would return for a non-existent option (e.g. null if default isn't specified)
+        // update_option will return true if it "adds" the option, even if value is same as default for non-existent.
+        // Let's just rely on update_option's return.
+    }
+
+    $updated = update_option($option_name, $option_value);
+
+    if ($updated) {
+        return "Success: Option '" . esc_html($option_name) . "' updated.";
+    } else {
+        // Check if the value was the same. update_option returns false if value is not changed.
+        // Need to be careful with type comparisons (e.g. "0" vs 0 vs false)
+        $newly_retrieved_value = get_option($option_name); // get it again to be sure of type post-save attempt
+        if ($newly_retrieved_value == $option_value) { // Use loose comparison to handle type juggling by WP
+             // Consider strict comparison if types are critical and known.
+             // For example, '0' == 0 is true. If $option_value was int 0 and saved as string '0'.
+             // A more robust check might involve serializing both and comparing if they are arrays/objects.
+             // For scalar values, this loose comparison is often what WP does.
+            return "Notice: Option '" . esc_html($option_name) . "' value unchanged. It was already set to the provided value.";
+        }
+        return "Error: Option '" . esc_html($option_name) . "' not updated. An error may have occurred, or the option is protected.";
+    }
+}
+
+
+/**
+ * Handles the dispatch of CLI commands coming from the user interface.
+ * It can transform commands or pass them to the generic WP-CLI executor.
+ *
+ * @param string $command_string The raw command string from the user.
+ * @return string The output from the command, or an error/notice string.
+ */
+function ai_agent_handle_cli_command( $command_string ) {
+    $command_string = trim($command_string);
+
+    // Try to parse 'option get <name>' or 'option update <name> <value_string>'
+    if (preg_match('/^option\s+(get|update)\s+([^\s]+)(?:\s*(.*))?$/s', $command_string, $matches)) {
+        // ... (existing option handling logic) ...
+        $sub_command_action = strtolower($matches[1]);
+        $option_name = $matches[2];
+        $value_string = isset($matches[3]) ? $matches[3] : null;
+
+        if ($sub_command_action === 'get') {
+            if ($value_string !== null && trim($value_string) !== '') {
+                return "Error: `option get` received too many arguments. Usage: option get <option_name>";
+            }
+            return php_handle_option_get([$option_name]);
+        } elseif ($sub_command_action === 'update') {
+            $value_to_pass = $value_string ?? "";
+            return php_handle_option_update([$option_name, $value_to_pass]);
+        }
+    }
+    // Try to parse 'page create --arg1=val1 ...'
+    elseif (preg_match('/^page\s+create(?:\s+(.*))?$/s', $command_string, $matches)) {
+        // ... (existing page create handling logic) ...
+        $arguments_string = $matches[1] ?? '';
+        $parsed_args = parse_cli_like_args($arguments_string);
+        return php_handle_page_create($parsed_args);
+    }
+    // Try to parse 'plugin list|activate|deactivate ...'
+    elseif (preg_match('/^plugin\s+(list|activate|deactivate)(?:\s+(.*))?$/s', $command_string, $matches)) {
+        // ... (existing plugin handling logic) ...
+        $action = strtolower($matches[1]);
+        $arguments_string = $matches[2] ?? '';
+
+        if ($action === 'list') {
+            $parsed_args = parse_cli_like_args($arguments_string);
+            return php_handle_plugin_list($parsed_args);
+        } elseif ($action === 'activate') {
+            $plugin_slug_arg = trim($arguments_string);
+            if (empty($plugin_slug_arg)) return "Error: Plugin slug/file required for activate.";
+            return php_handle_plugin_activate([$plugin_slug_arg]);
+        } elseif ($action === 'deactivate') {
+            $plugin_slug_arg = trim($arguments_string);
+            if (empty($plugin_slug_arg)) return "Error: Plugin slug/file required for deactivate.";
+            return php_handle_plugin_deactivate([$plugin_slug_arg]);
+        }
+    }
+    // Try to parse 'theme list|activate ...'
+    elseif (preg_match('/^theme\s+(list|activate)(?:\s+(.*))?$/s', $command_string, $matches)) {
+        // ... (existing theme handling logic) ...
+        $action = strtolower($matches[1]);
+        $arguments_string = $matches[2] ?? '';
+
+        if ($action === 'list') {
+            $parsed_args = parse_cli_like_args($arguments_string);
+            return php_handle_theme_list($parsed_args);
+        } elseif ($action === 'activate') {
+            $theme_slug_arg = trim($arguments_string);
+            if (empty($theme_slug_arg)) return "Error: Theme stylesheet (slug) required for activate.";
+            return php_handle_theme_activate([$theme_slug_arg]);
+        }
+    }
+    // Try to parse 'user list|get ...'
+    elseif (preg_match('/^user\s+(list|get)(?:\s+(.*))?$/s', $command_string, $matches)) {
+        // ... (existing user handling logic) ...
+        $action = strtolower($matches[1]);
+        $arguments_string = $matches[2] ?? '';
+
+        if ($action === 'list') {
+            $parsed_args = parse_cli_like_args($arguments_string);
+            return php_handle_user_list($parsed_args);
+        } elseif ($action === 'get') {
+            $identifier_arg = trim($arguments_string);
+            if (empty($identifier_arg)) return "Error: User identifier required for 'user get'.";
+            return php_handle_user_get([$identifier_arg]);
+        }
+    }
+    // Try to parse 'core version ...'
+    elseif (preg_match('/^core\s+version(?:\s+(.*))?$/s', $command_string, $matches)) {
+        $arguments_string = $matches[1] ?? '';
+        $parsed_args = parse_cli_like_args($arguments_string);
+        return php_handle_core_version($parsed_args);
+    }
+    // Fallback for commands not handled by specific PHP functions
+    else {
+        return "Error: Command '" . esc_html($command_string) . "' is not recognized or not supported by native PHP handlers. Only PHP-native commands are allowed.";
+    }
+    // Fallback if no conditions met (should ideally not be reached if logic is exhaustive for known command types)
+    // This line was commented out in original, keeping it so for now.
+    // return "Error: Unhandled command or internal logic error in ai_agent_handle_cli_command.";
+    }
+}
+
+// WP-CLI execution via proc_open is being phased out.
+// The function ai_agent_execute_wp_cli_command is now removed.
+// All commands are expected to be handled by specific php_handle_* functions
+// or return an error if not recognized.
+
 
 /**
  * Retrieves the content of a specific post.
