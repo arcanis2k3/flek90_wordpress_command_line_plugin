@@ -114,16 +114,26 @@ function wpcli_command_handler_callback() {
     // The ai_agent_handle_cli_command function is in 'includes/wp-interaction.php'.
     $output = ai_agent_handle_cli_command( $command );
 
-    // Check if the output indicates an error explicitly returned by our handlers
-    // or if it's a generic 'false' which our old execute function might return (though less likely now).
-    // The new handler returns descriptive strings. We should check for "Error:" prefix or if $output is false.
-    if ( $output === false || (is_string($output) && strpos($output, 'Error:') === 0) ) {
-        // If $output is already an error message from our handler, use it. Otherwise, generic message.
-        $message = (is_string($output) && strpos($output, 'Error:') === 0) ? $output : 'Error: Failed to execute command.';
-        wp_send_json_error( ['message' => $message], 500 );
+    // Check if the output string indicates an error.
+    // ai_agent_handle_cli_command formats error strings to start with "Error:", "Fatal error:", or "Warning:".
+    $is_error = false;
+    if (is_string($output)) {
+        if (strpos($output, 'Error:') === 0 ||
+            strpos($output, 'Fatal error:') === 0 ||
+            strpos($output, 'Warning:') === 0) {
+            $is_error = true;
+        }
+    } elseif ($output === false) {
+        // Fallback for any unexpected 'false' return, though ai_agent_handle_cli_command should not return false.
+        $is_error = true;
+        $output = 'Error: Command execution failed with an unspecified error.';
+    }
+
+    if ( $is_error ) {
+        wp_send_json_error( ['message' => $output], 500 ); // $output already contains the full error message.
     } else {
         // The JS expects 'output' field for success
-        wp_send_json_success( ['output' => $output] );
+        wp_send_json_success( ['output' => $output] ); // $output contains success message or command output.
     }
 }
 

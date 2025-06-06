@@ -26,23 +26,67 @@ function ai_agent_handle_cli_command( $command_string ) {
         $transformed_command = preg_replace( '/^page create/', 'post create --post_type=page', $command_string, 1 );
         if ($transformed_command === null) {
             // error_log("AI Agent: preg_replace failed for 'page create' command: " . $command_string);
-            return "Error: Failed to transform 'page create' command.";
+            return "Error: Failed to transform 'page create' command."; // This will be caught by the main handler
         }
-        return ai_agent_execute_wp_cli_command( $transformed_command );
+        $command_to_execute = $transformed_command;
     }
     // For other commands like 'option update', 'option get', etc., pass them directly.
     // These are assumed to be valid WP-CLI commands or will be handled by WP-CLI itself.
     else {
-        return ai_agent_execute_wp_cli_command( $command_string );
+        $command_to_execute = $command_string;
+    }
+
+    $result = ai_agent_execute_wp_cli_command( $command_to_execute );
+
+    if ( $result['exit_code'] !== 0 ) {
+        // Format a detailed error message
+        $error_parts = [];
+        $error_parts[] = "Error: WP-CLI command execution failed (Exit Code: " . $result['exit_code'] . ").";
+
+        // $result['error_message'] should already be prefixed by ai_agent_execute_wp_cli_command if it's from stderr
+        // or a generic error.
+        if (!empty($result['error_message'])) {
+            // If error_message already starts with a standard prefix, use as is, otherwise, clarify it's from STDERR/Captured
+            if (strpos($result['error_message'], 'Error:') === 0 || strpos($result['error_message'], 'Fatal error:') === 0 || strpos($result['error_message'], 'Warning:') === 0) {
+                $error_parts[] = "Details: " . $result['error_message'];
+            } else {
+                $error_parts[] = "STDERR/Details: " . $result['error_message'];
+            }
+        }
+
+        if (!empty($result['output'])) {
+            $error_parts[] = "STDOUT (may contain partial output): " . $result['output'];
+        }
+
+        return implode("\n", $error_parts);
+
+    } else {
+        // Success
+        $final_output = $result['output']; // This should be the primary output from STDOUT
+
+        // Append warnings from STDERR if any (error_message might contain "Warning: ...")
+        if (!empty($result['error_message']) && strpos($result['error_message'], 'Warning:') === 0) {
+            $final_output .= "\n" . $result['error_message'];
+        }
+
+        // Ensure some output is always returned, even if it's just a confirmation.
+        if (trim($final_output) === "") {
+            // This case is now handled by ai_agent_execute_wp_cli_command returning
+            // "Command executed successfully and produced no output." in $result['output']
+            // So, $final_output should not be truly empty if that logic holds.
+            // However, as a fallback:
+             return "Command executed successfully with no direct output. Check for warnings if any displayed.";
+        }
+        return trim($final_output);
     }
 }
 
 
 /**
- * Executes a WP-CLI command and returns the output.
+ * Executes a WP-CLI command using proc_open and returns a structured array.
  *
  * @param string $command The WP-CLI command to execute (without 'wp ' prefix).
- * @return string|false The output from the command, or false on error.
+ * @return array An array with keys 'output', 'error_message', and 'exit_code'.
  *
  * @note This function serves as the primary, structured, and safer interface for executing WP-CLI commands.
  *       It ensures that commands are run with necessary path and user context. Direct passthrough
@@ -50,46 +94,81 @@ function ai_agent_handle_cli_command( $command_string ) {
  *       within this plugin should ideally use this helper or specific wrapper functions built upon it.
  */
 function ai_agent_execute_wp_cli_command( $command ) {
-    // Ensure WP-CLI path is correct and WordPress path is specified.
-    // --allow-root is used because a web server user (like www-data) might run this.
-    // Redirect STDERR to STDOUT to capture error messages from wp-cli.
-    $full_command = 'wp ' . $command . ' --path=' . AI_AGENT_WP_PATH . ' --allow-root 2>&1';
-
-    // For debugging: error_log( "Executing WP-CLI command: " . $full_command );
-
-    // Execute the command
-    // Using shell_exec. Consider alternatives like proc_open for more control if needed.
-    // Ensure $command is not empty after potential transformations
+    // Ensure $command is not empty.
     if (empty(trim($command))) {
-        // error_log("AI Agent: Attempted to execute an empty WP-CLI command.");
-        return "Error: Attempted to execute an empty command."; // This will be caught by handler
-    }
-    $output = shell_exec( $full_command );
-
-    // For debugging: error_log( "WP-CLI output: " . $output );
-
-    // After '2>&1', $output will contain STDOUT and STDERR.
-    // $output will be null if shell_exec fails (e.g., disabled, command not found due to PATH issues even for 'wp')
-    if ( $output === null ) {
-        // This indicates a severe issue, like shell_exec being disabled or 'wp' not found at system level.
-        // error_log( "WP-CLI command execution failed: shell_exec returned null for command: " . $full_command );
-        return "Error: Command execution failed at system level (shell_exec returned null). Check server logs and shell_exec configuration.";
+        return [
+            'output' => null,
+            'error_message' => 'Error: Attempted to execute an empty command.',
+            'exit_code' => -1 // Indicate internal error before execution attempt
+        ];
     }
 
-    $trimmed_output = trim( $output );
+    // Construct the full command. Note: AI_AGENT_WP_PATH should be defined.
+    // If AI_AGENT_WP_PATH is not defined here, it must be defined in the main plugin file
+    // or passed appropriately. Assuming it's globally available via define().
+    $full_command = 'wp ' . $command . ' --path=' . AI_AGENT_WP_PATH . ' --allow-root';
+    // For debugging: error_log( "Executing WP-CLI command (proc_open): " . $full_command );
 
-    // Even with 2>&1, a command might succeed and produce no output, or produce only error output.
-    // We should check if the output string contains "Error:", "Warning:", "Fatal error:" etc.
-    // WP-CLI typically uses "Error:" for its own controlled errors. PHP errors would be "Fatal error:", "Warning:".
-    if ( $trimmed_output === "" ) {
-        return "Command executed and produced no output."; // Not necessarily an error.
-    } elseif (strpos($trimmed_output, 'Error:') === 0 || strpos($trimmed_output, 'Fatal error:') === 0 || strpos($trimmed_output, 'Warning:') === 0) {
-        // If WP-CLI or PHP error messages are now in the output, return them as an error.
-        // The 'Error:' prefix will be caught by the main handler and sent as wp_send_json_error.
-        return $trimmed_output; // It already starts with "Error:" or similar.
+    $descriptor_spec = [
+        0 => ['pipe', 'r'], // stdin
+        1 => ['pipe', 'w'], // stdout
+        2 => ['pipe', 'w'], // stderr
+    ];
+
+    $pipes = [];
+    $process = proc_open($full_command, $descriptor_spec, $pipes, null, null);
+
+    if (is_resource($process)) {
+        fclose($pipes[0]); // Close stdin as we're not sending input
+
+        $stdout = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+
+        $exit_code = proc_close($process);
+
+        $trimmed_stdout = trim($stdout);
+        $trimmed_stderr = trim($stderr);
+
+        if ($exit_code !== 0) {
+            // Error occurred
+            $error_message = !empty($trimmed_stderr) ? $trimmed_stderr : $trimmed_stdout;
+            // Ensure a generic error prefix if specific one not found from WP-CLI
+            if (strpos($error_message, 'Error:') !== 0 && strpos($error_message, 'Fatal error:') !== 0 && strpos($error_message, 'Warning:') !== 0) {
+                 $error_message = 'Error: Command failed. Output: ' . $error_message;
+            }
+            return [
+                'output' => $trimmed_stdout, // STDOUT might still contain useful info or partial output
+                'error_message' => $error_message,
+                'exit_code' => $exit_code
+            ];
+        } else {
+            // Success
+            $final_output = $trimmed_stdout;
+            if (empty($final_output) && !empty($trimmed_stderr)) {
+                // If STDOUT is empty but STDERR has content (e.g., warnings from WP-CLI on success),
+                // treat STDERR as part of the output, perhaps prefixed.
+                $final_output = "Warning (from STDERR): " . $trimmed_stderr;
+            } elseif (empty($final_output) && empty($trimmed_stderr)) {
+                $final_output = "Command executed successfully and produced no output.";
+            }
+            return [
+                'output' => $final_output,
+                'error_message' => !empty($trimmed_stderr) && $exit_code === 0 ? 'Warning: ' . $trimmed_stderr : null, // Keep stderr if it has warnings on success
+                'exit_code' => $exit_code
+            ];
+        }
+    } else {
+        // proc_open failed
+        // error_log("AI Agent: proc_open failed for command: " . $full_command);
+        return [
+            'output' => null,
+            'error_message' => 'Error: Failed to start command execution process (proc_open failed). Check server configuration (proc_open availability, paths).',
+            'exit_code' => -2 // Indicate proc_open failure specifically
+        ];
     }
-
-    return $trimmed_output; // Normal output
 }
 
 /**
