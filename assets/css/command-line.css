@@ -1,0 +1,206 @@
+/* Main CLI Window */
+#wpcli-window { /* Was #op-chat-window */
+    position: fixed;
+    bottom: 90px; /* Adjusted to be above the new floating icon */
+    right: 20px;
+    width: 370px; /* Slightly wider */
+    max-height: 550px; /* Slightly taller */
+    background-color: #f9f9f9;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+    display: none; /* Initially hidden, JS will toggle */
+    flex-direction: column;
+    z-index: 99990; /* Below the icon but above most content */
+}
+
+/* CLI Header */
+#wpcli-header { /* Was #ai-chat-header */
+    padding: 12px 15px; /* Adjusted padding */
+    background-color: #0073aa; /* WordPress blue */
+    color: white;
+    border-bottom: 1px solid #005a87; /* Darker border */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+#wpcli-header span { /* Was #ai-chat-header span */
+    font-weight: bold;
+    font-size: 1.1em;
+}
+
+/* Close Button */
+#wpcli-close-btn { /* Was #op-chat-close-btn */
+    background: none;
+    border: none;
+    color: white; /* Ensure visibility on new header background */
+    font-size: 24px; /* Larger */
+    cursor: pointer;
+    padding: 0 5px;
+    line-height: 1;
+}
+#wpcli-close-btn:hover { /* Was #op-chat-close-btn:hover */
+    color: #cce5ff; /* Lighter blue on hover */
+}
+
+/* Messages Area */
+#wpcli-messages { /* Was #op-chat-messages */
+    flex-grow: 1;
+    padding: 15px; /* More padding */
+    overflow-y: auto;
+    max-height: 400px; /* Adjusted */
+    min-height: 100px;
+    background-color: #fff;
+}
+
+/* General message styling - using a shared class from new JS */
+.wpcli-message { /* Was .op-chat-message */
+    margin-bottom: 10px;
+    padding: 10px 15px;
+    border-radius: 18px; /* More rounded */
+    word-wrap: break-word;
+    white-space: pre-wrap; /* Changed from pre-line for better command output formatting */
+    line-height: 1.5;
+    max-width: 90%; /* Prevent messages from taking full width */
+}
+
+.wpcli-user-command { /* Was .op-user-message */
+    text-align: left; /* User commands typically left-aligned in CLIs */
+    background-color: #e0e0e0; /* Light grey for user commands, less prominent than server output */
+    color: #333;
+    border-radius: 18px 18px 18px 5px; /* Tail on bottom right */
+    margin-right: auto; /* Align to left */
+    margin-left: 0;
+}
+
+.wpcli-server-response { /* Was .op-ai-message */
+    text-align: left;
+    background-color: #1e1e1e; /* Dark background for server responses */
+    color: #00ff00; /* Green text for server responses */
+    font-family: monospace;
+    border-radius: 18px 18px 18px 5px; /* Tail on bottom right */
+    margin-right: auto; /* Align to left */
+    margin-left: 0;
+}
+
+/* .op-ai-message.thinking removed, no equivalent for CLI */
+
+/* Links within messages - adjust as needed for CLI output */
+.wpcli-message a { /* Was .op-chat-message a */
+    color: inherit;
+    text-decoration: underline;
+}
+.wpcli-user-command a { /* Was .op-user-message a */
+    color: #0073aa; /* WordPress blue for links in user commands */
+}
+.wpcli-server-response a { /* Was .op-ai-message a */
+    color: #90ee90; /* Light green for links in server responses */
+}
+
+
+/* Input Area */
+#wpcli-input-area { /* Was #ai-chat-input-area */
+    display: flex;
+    padding: 15px; /* More padding */
+    border-top: 1px solid #ddd; /* Lighter border */
+    background-color: #f5f5f5; /* Light background for input area */
+    align-items: center; /* Align items vertically */
+}
+
+/* Input Textarea */
+#wpcli-input { /* Was #op-chat-input */
+    flex-grow: 1;
+    padding: 10px 12px; /* Adjusted padding */
+    border: 1px solid #ccc; /* Slightly darker border */
+    border-radius: 20px; /* Pill shape */
+    margin-right: 10px;
+    font-family: inherit;
+    font-size: 1em;
+    min-height: 24px;
+    height: auto;
+    resize: none; /* Disable manual resize, rely on auto-grow or fixed lines */
+    overflow-y: auto; /* Scroll if content exceeds max height */
+    box-sizing: border-box;
+    line-height: 1.6;
+    max-height: 100px; /* Limit height to approx 3-4 lines */
+}
+
+/* Send Button */
+#wpcli-send-btn { /* Was #op-chat-send-btn */
+    padding: 0; /* Reset padding */
+    width: 40px; /* Circular button */
+    height: 40px; /* Circular button */
+    background-color: #0073aa; /* WordPress blue */
+    color: white;
+    border: none;
+    border-radius: 50%; /* Circular */
+    cursor: pointer;
+    font-size: 18px; /* Icon size (e.g., for a send icon font or SVG) */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s ease;
+}
+
+#wpcli-send-btn:hover { /* Was #op-chat-send-btn:hover */
+    background-color: #005a87; /* Darker blue */
+}
+
+#wpcli-send-btn:disabled { /* Was #op-chat-send-btn:disabled */
+    background-color: #a0a0a0;
+    cursor: not-allowed;
+}
+
+/* New Floating CLI Icon Button */
+#wpcli-icon { /* Was #op-chat-icon */
+    position: fixed;
+    bottom: 25px;
+    right: 25px;
+    width: 60px;
+    height: 60px;
+    background-color: #0073aa; /* WordPress blue */
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px; /* For the emoji or icon */
+    cursor: pointer;
+    z-index: 100000; /* Ensure it's above other elements */
+    box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+    border: none;
+    padding: 0;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+#wpcli-icon:hover { /* Was #op-chat-icon:hover */
+    background-color: #005a87; /* Darker on hover */
+    transform: scale(1.1); /* Slight zoom effect */
+}
+
+/* Styles for #ai-chat-floating-toggle-btn are removed as it's no longer used. */
+
+/* Basic styling for the CLI toggle icon */
+#wpcli-icon {
+    position: fixed;
+    bottom: 20px; /* Adjust as needed */
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #0073aa; /* WordPress blue */
+    color: white;
+    padding: 10px 15px;
+    border-radius: 5px; /* Less circular than original chat icon */
+    cursor: pointer;
+    z-index: 100000; /* Ensure it's above most other elements, including the CLI window's z-index if it's lower */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    font-weight: bold;
+    /* Ensure it is displayed, as JS might interact with display property if it was copied from chat icon logic */
+    display: block !important;
+}
+
+#wpcli-icon:hover {
+    background-color: #005a87; /* Darker blue on hover */
+}
